@@ -1,6 +1,6 @@
 # Tesorería Firestore
 
-Aplicación web instalable (PWA) para administrar el flujo de caja de varias empresas y varias cuentas corrientes. Está preparada para GitHub Pages y usa Firebase Authentication + Cloud Firestore.
+Aplicación web instalable (PWA) para administrar el flujo de caja de varias empresas y varias cuentas corrientes. Está preparada para GitHub Pages y conectada al proyecto Firebase `tesoreriaapp-e8bac` mediante Firebase Authentication + Cloud Firestore.
 
 ## Funciones incluidas
 
@@ -14,20 +14,19 @@ Aplicación web instalable (PWA) para administrar el flujo de caja de varias emp
 - Exportación a Excel, interfaz responsiva estilo SAP e instalación en PC, Android y iPhone.
 - Acceso por correo/contraseña o Google. Los datos de cada usuario quedan aislados en Firestore.
 
-## 1. Crear y preparar Firebase
+## 1. Terminar de preparar Firebase
 
-1. En [Firebase Console](https://console.firebase.google.com/), crea un proyecto.
-2. En **Project settings → Your apps**, agrega una aplicación web y conserva sus datos de configuración.
-3. En **Build → Authentication → Sign-in method**, habilita:
+La configuración web ya está incorporada. Solo debes completar estas acciones en [Firebase Console](https://console.firebase.google.com/) para el proyecto `tesoreriaapp-e8bac`:
+
+1. En **Build → Authentication → Sign-in method**, habilita:
    - **Email/Password**.
    - **Google** si deseas usar ese botón de acceso.
-4. En **Build → Firestore Database**, crea la base de datos. Selecciona una región cercana a tus usuarios.
-5. Instala Firebase CLI y publica las reglas incluidas:
+2. En **Build → Firestore Database**, crea la base de datos si todavía no existe. Selecciona una región cercana a tus usuarios.
+3. Instala Firebase CLI y publica las reglas incluidas:
 
    ```bash
    npm install -g firebase-tools
    firebase login
-   firebase use --add
    firebase deploy --only firestore:rules,firestore:indexes
    ```
 
@@ -39,39 +38,19 @@ Requiere Node.js 20 o superior.
 
 ```bash
 npm install
-cp .env.example .env.local
 npm run dev
 ```
 
-Completa `.env.local` con los seis valores de la configuración web de Firebase:
-
-```dotenv
-VITE_FIREBASE_API_KEY=...
-VITE_FIREBASE_AUTH_DOMAIN=...
-VITE_FIREBASE_PROJECT_ID=...
-VITE_FIREBASE_STORAGE_BUCKET=...
-VITE_FIREBASE_MESSAGING_SENDER_ID=...
-VITE_FIREBASE_APP_ID=...
-```
-
-La configuración web de Firebase identifica el proyecto; no reemplaza las reglas de seguridad. No incluyas cuentas de servicio ni claves privadas en este repositorio.
+No necesitas crear `.env.local`: la configuración de `tesoreriaapp-e8bac` está incluida. Si en el futuro quieres conectar otro proyecto, copia `.env.example` como `.env.local` y reemplaza sus valores. La configuración web identifica el proyecto; no reemplaza las reglas de seguridad. No incluyas cuentas de servicio ni claves privadas en este repositorio.
 
 ## 3. Publicar en GitHub Pages
 
 1. Descomprime este ZIP y sube **el contenido de la carpeta** a la raíz de un repositorio GitHub.
-2. En el repositorio abre **Settings → Secrets and variables → Actions → Variables**.
-3. Crea estas variables con los valores de tu aplicación web Firebase:
+2. Abre **Settings → Pages** y selecciona **Source: GitHub Actions**.
+3. Haz un push a la rama `main` o ejecuta manualmente el flujo **Deploy Tesorería to GitHub Pages** desde la pestaña Actions.
+4. Copia el dominio publicado, por ejemplo `usuario.github.io`, y agrégalo en **Firebase Console → Authentication → Settings → Authorized domains**.
 
-   - `VITE_FIREBASE_API_KEY`
-   - `VITE_FIREBASE_AUTH_DOMAIN`
-   - `VITE_FIREBASE_PROJECT_ID`
-   - `VITE_FIREBASE_STORAGE_BUCKET`
-   - `VITE_FIREBASE_MESSAGING_SENDER_ID`
-   - `VITE_FIREBASE_APP_ID`
-
-4. Abre **Settings → Pages** y selecciona **Source: GitHub Actions**.
-5. Haz un push a la rama `main` o ejecuta manualmente el flujo **Deploy Tesorería to GitHub Pages** desde la pestaña Actions.
-6. Copia el dominio publicado, por ejemplo `usuario.github.io`, y agrégalo en **Firebase Console → Authentication → Settings → Authorized domains**.
+Las variables `VITE_FIREBASE_*` de GitHub son opcionales y únicamente se necesitan si deseas reemplazar el proyecto Firebase incorporado.
 
 El flujo `.github/workflows/deploy-pages.yml` instala dependencias, comprueba los tipos, construye la aplicación y publica `dist/`. La ruta relativa de Vite permite alojarla tanto en `usuario.github.io` como en `usuario.github.io/nombre-repositorio/`.
 
