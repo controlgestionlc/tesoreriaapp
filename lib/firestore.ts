@@ -18,6 +18,7 @@ import {
   validRut,
   type Data,
   type Entry,
+  type Partner,
 } from "./treasury";
 
 type CollectionName = keyof Data;
@@ -192,10 +193,41 @@ export async function mutateTreasury(uid: string, input: any, data: Data) {
   if (input.action === "entry" || input.action === "import") {
     const rawRows = input.action === "import" ? input.rows : [input];
     if (!Array.isArray(rawRows) || !rawRows.length || rawRows.length > 300) throw new Error("La carga debe contener entre 1 y 300 documentos.");
+    const importedPartnerMap = new Map<string, Partner>();
+    if (input.action === "import") {
+      for (const raw of rawRows) {
+        if (!raw.newPartner) continue;
+        const candidate = raw.newPartner;
+        const id = required(candidate.id, "el identificador del auxiliar");
+        const companyId = required(candidate.companyId, "la empresa del auxiliar");
+        const name = required(candidate.name, "el nombre del auxiliar");
+        const rut = cleanRut(required(candidate.rut, "el RUT del auxiliar"));
+        if (!data.companies.some((company) => company.id === companyId)) throw new Error("La empresa del auxiliar no existe.");
+        if (!validRut(rut)) throw new Error(`RUT inválido para ${name}.`);
+        if (!["Cliente", "Proveedor", "Ambos"].includes(candidate.role)) throw new Error("El rol del auxiliar importado no es válido.");
+        if (id !== `aux_${companyId}_${rut}` || id.includes("/")) throw new Error("El identificador del auxiliar importado no es válido.");
+        if (raw.partnerId !== id) throw new Error("El documento no coincide con su auxiliar importado.");
+        const previous = importedPartnerMap.get(id);
+        if (previous && (previous.companyId !== companyId || previous.rut !== rut || previous.name !== name)) {
+          throw new Error(`Hay datos contradictorios para el auxiliar ${name}.`);
+        }
+        importedPartnerMap.set(id, {
+          id,
+          companyId,
+          name,
+          rut,
+          role: previous && previous.role !== candidate.role ? "Ambos" : candidate.role,
+        });
+      }
+    }
+    const importedPartners = [...importedPartnerMap.values()];
+    const partnerById = new Map(data.partners.map((partner) => [partner.id, partner]));
+    importedPartners.forEach((partner) => partnerById.set(partner.id, partner));
+    const validationData: Data = { ...data, partners: [...partnerById.values()] };
     const prepared: Array<{ id: string; oldId?: string; values: ReturnType<typeof entryValues> }> = [];
     const duplicateIds = new Set<string>();
     for (const raw of rawRows) {
-      const values = entryValues(raw, data);
+      const values = entryValues(raw, validationData);
       const installments = Math.max(1, Math.min(60, integer(raw.installments ?? 1, "Las cuotas")));
       if (raw.id && installments !== 1) throw new Error("Edite las cuotas individualmente.");
       if (raw.id && data.payments.some((payment) => payment.entryId === raw.id)) throw new Error("El movimiento tiene abonos y no puede editarse.");
@@ -214,11 +246,37 @@ export async function mutateTreasury(uid: string, input: any, data: Data) {
         prepared.push({ id: desiredId, oldId: raw.id && raw.id !== desiredId ? raw.id : undefined, values: installment });
       }
     }
+    if (prepared.length + importedPartners.length > 450) {
+      throw new Error("La carga contiene demasiados documentos y auxiliares nuevos. Divídala en dos archivos.");
+    }
     await runTransaction(database, async (transaction) => {
-      const existing = await Promise.all(prepared.map((item) => transaction.get(doc(path(uid, "entries"), item.id))));
+      const partnerRefs = importedPartners.map((partner) => doc(path(uid, "partners"), partner.id));
+      const entryRefs = prepared.map((item) => doc(path(uid, "entries"), item.id));
+      const [partnerSnapshots, existing] = await Promise.all([
+        Promise.all(partnerRefs.map((reference) => transaction.get(reference))),
+        Promise.all(entryRefs.map((reference) => transaction.get(reference))),
+      ]);
       prepared.forEach((item, index) => {
         const sameExisting = item.oldId ? false : input.action === "entry" && input.id === item.id;
         if (existing[index].exists() && !sameExisting) throw new Error(`Documento duplicado: ${item.values.docNumber}.`);
+      });
+      importedPartners.forEach((partner, index) => {
+        const snapshot = partnerSnapshots[index];
+        if (!snapshot.exists()) {
+          transaction.set(partnerRefs[index], {
+            companyId: partner.companyId,
+            name: partner.name,
+            rut: partner.rut,
+            role: partner.role,
+          });
+          return;
+        }
+        const stored = snapshot.data() as Omit<Partner, "id">;
+        if (stored.companyId !== partner.companyId || cleanRut(stored.rut) !== partner.rut) {
+          throw new Error(`Existe un auxiliar incompatible con el identificador de ${partner.name}.`);
+        }
+        const role = stored.role === partner.role || stored.role === "Ambos" ? stored.role : "Ambos";
+        transaction.set(partnerRefs[index], { role }, { merge: true });
       });
       prepared.forEach((item) => {
         if (item.oldId) transaction.delete(doc(path(uid, "entries"), item.oldId));

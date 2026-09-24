@@ -8,7 +8,8 @@ Aplicación web instalable (PWA) para administrar el flujo de caja de varias emp
 - Documentos por cobrar y por pagar, con vencimientos y proyección de 30, 60 o 90 días.
 - Auxiliar de clientes y proveedores por empresa, buscable dinámicamente por RUT o nombre.
 - Número de documento y contraparte obligatorios para clientes y proveedores.
-- Carga Excel de hasta 300 documentos con revisión previa y detección de duplicados.
+- Carga Excel de hasta 300 documentos con revisión previa y detección de duplicados. Acepta la plantilla propia y el formato `REGISTRO FLUJO CAJA`.
+- Creación automática de auxiliares nuevos desde el RUT y nombre del archivo; si una fila no trae RUT, intenta reutilizar un auxiliar anterior por nombre.
 - Movimientos manuales, préstamos y leasing; estos últimos admiten hasta 60 cuotas.
 - Cobros y pagos totales o parciales que actualizan el saldo bancario.
 - Exportación a Excel, interfaz responsiva estilo SAP e instalación en PC, Android y iPhone.
@@ -87,4 +88,4 @@ npm run preview   # vista local de la compilación
 
 ## Importación Excel
 
-Desde **Importar Excel**, descarga la plantilla incluida. Registra primero los auxiliares; el nombre y RUT del archivo deben corresponder a un cliente o proveedor de la empresa. Si el vencimiento viene vacío, se asignan 30 días desde la emisión. Ninguna fila se guarda si la revisión detecta errores.
+Desde **Importar Excel**, descarga la plantilla incluida o usa un archivo con las columnas `TIPO`, `DOCUMENTO`, `NUMERO DOC`, `FECHA EMISION`, `VENCIMIENTO`, `RUT`, `AUXILIAR` e `IMPORTE A PAGAR`. Los valores `INGRESO` y `EGRESO` se reconocen automáticamente. Las remuneraciones, imposiciones e impuestos se clasifican sin exigir auxiliar; para facturas se crean los auxiliares inexistentes. Si el vencimiento viene vacío, se asignan 30 días desde la emisión. Ninguna fila ni auxiliar se guarda si la revisión detecta errores.
