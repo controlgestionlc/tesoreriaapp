@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "paths": { "@/*": ["./*"] },
+    "types": ["vite/client"]
+  },
+  "include": ["src", "app/page.tsx", "components/auth-gate.tsx", "hooks/use-mobile.ts", "lib", "vite.config.ts"],
+  "exclude": ["app/api", "app/layout.tsx", "app/chatgpt-auth.ts", "db", "examples", "scripts", "build"]
+}
