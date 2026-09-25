@@ -316,7 +316,7 @@ export async function exportData(data: Data) {
   const workbook = new ExcelJS.Workbook();
   for (const [name, rows] of Object.entries(data)) {
     const sheet = workbook.addWorksheet(
-      ({ companies: "Empresas", accounts: "Cuentas", partners: "Auxiliares", entries: "Documentos", payments: "Abonos" } as any)[name],
+      ({ companies: "Empresas", accounts: "Cuentas", partners: "Auxiliares", entries: "Documentos", payments: "Abonos", commitments: "Compromisos", members: "Usuarios" } as any)[name],
     );
     if (rows.length) {
       const columns = Object.keys(rows[0]);

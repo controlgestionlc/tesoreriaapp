@@ -5,11 +5,14 @@ import {
   getDoc,
   getDocs,
   onSnapshot,
+  query,
   runTransaction,
   setDoc,
+  where,
   type DocumentData,
   type Unsubscribe,
 } from "firebase/firestore";
+import type { User } from "firebase/auth";
 import { firestore } from "./firebase";
 import {
   addMonths,
@@ -18,11 +21,22 @@ import {
   validRut,
   type Data,
   type Entry,
+  type Commitment,
   type Partner,
+  type Role,
 } from "./treasury";
 
 type CollectionName = keyof Data;
-const names: CollectionName[] = ["companies", "accounts", "partners", "entries", "payments"];
+const financeNames: CollectionName[] = ["companies", "accounts", "partners", "entries", "payments", "commitments", "members"];
+const supervisorNames: CollectionName[] = ["companies", "commitments"];
+
+export type WorkspaceAccess = {
+  uid: string;
+  ownerUid: string;
+  role: Role;
+  email: string;
+  displayName: string;
+};
 
 function db() {
   if (!firestore) throw new Error("Firebase no está configurado. Revise el archivo .env.local.");
@@ -37,8 +51,18 @@ function rows(snapshot: { docs: Array<{ id: string; data(): DocumentData }> }) {
   return snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
 }
 
-export async function loadTreasury(uid: string): Promise<Data> {
-  const snapshots = await Promise.all(names.map((name) => getDocs(path(uid, name))));
+function namesFor(role: Role) {
+  return role === "supervisor" ? supervisorNames : financeNames;
+}
+
+function source(uid: string, name: CollectionName, role: Role, actorUid: string) {
+  const base = path(uid, name);
+  return role === "supervisor" && name === "commitments" ? query(base, where("supervisorUid", "==", actorUid)) : base;
+}
+
+export async function loadTreasury(uid: string, role: Role, actorUid: string): Promise<Data> {
+  const names = namesFor(role);
+  const snapshots = await Promise.all(names.map((name) => getDocs(source(uid, name, role, actorUid))));
   return names.reduce((all, name, index) => {
     (all[name] as unknown[]) = rows(snapshots[index]);
     return all;
@@ -47,14 +71,17 @@ export async function loadTreasury(uid: string): Promise<Data> {
 
 export function subscribeTreasury(
   uid: string,
+  role: Role,
+  actorUid: string,
   onData: (data: Data) => void,
   onError: (error: Error) => void,
 ): Unsubscribe {
+  const names = namesFor(role);
   const current = structuredClone(blank);
   const initialized = new Set<CollectionName>();
   const subscriptions = names.map((name) =>
     onSnapshot(
-      path(uid, name),
+      source(uid, name, role, actorUid),
       (snapshot) => {
         (current[name] as unknown[]) = rows(snapshot);
         initialized.add(name);
@@ -92,6 +119,49 @@ function date(value: unknown, label: string) {
 async function hash(value: string) {
   const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+export async function ensureWorkspaceAccess(user: User): Promise<WorkspaceAccess> {
+  const database = db();
+  const email = String(user.email ?? "").trim().toLowerCase();
+  if (!email) throw new Error("La cuenta debe tener un correo electrónico verificado por Firebase.");
+  const displayName = String(user.displayName || email.split("@")[0]).trim();
+  const directoryRef = doc(database, "userDirectory", await hash(email));
+  await setDoc(directoryRef, { uid: user.uid, email, displayName, updatedAt: new Date().toISOString() }, { merge: true });
+
+  const membershipRef = doc(database, "memberships", user.uid);
+  let membership = await getDoc(membershipRef);
+  if (!membership.exists()) {
+    await runTransaction(database, async (transaction) => {
+      const current = await transaction.get(membershipRef);
+      if (current.exists()) return;
+      const access: Omit<WorkspaceAccess, "uid"> & { active: boolean } = {
+        ownerUid: user.uid,
+        role: "admin",
+        email,
+        displayName,
+        active: true,
+      };
+      transaction.set(membershipRef, access);
+      transaction.set(doc(path(user.uid, "members"), user.uid), {
+        email,
+        displayName,
+        role: "admin",
+        active: true,
+      });
+    });
+    membership = await getDoc(membershipRef);
+  }
+  const stored = membership.data() as Omit<WorkspaceAccess, "uid"> & { active?: boolean };
+  if (stored.active === false) throw new Error("Tu acceso a este espacio de trabajo está desactivado.");
+  if (!["admin", "manager", "supervisor"].includes(stored.role)) throw new Error("El rol asignado no es válido.");
+  return {
+    uid: user.uid,
+    ownerUid: required(stored.ownerUid, "el espacio de trabajo"),
+    role: stored.role,
+    email: stored.email || email,
+    displayName: stored.displayName || displayName,
+  };
 }
 
 function newId(uid: string, name: CollectionName) {
@@ -143,8 +213,120 @@ function entryValues(raw: any, data: Data) {
   };
 }
 
-export async function mutateTreasury(uid: string, input: any, data: Data) {
+export async function mutateTreasury(uid: string, input: any, data: Data, actor: WorkspaceAccess) {
   const database = db();
+  if (actor.ownerUid !== uid) throw new Error("El espacio de trabajo no coincide con tu acceso.");
+
+  if (input.action === "member") {
+    if (actor.role !== "admin") throw new Error("Solo el administrador puede gestionar usuarios.");
+    const email = required(input.email, "el correo del usuario").toLowerCase();
+    const role = input.role as Role;
+    if (!["manager", "supervisor"].includes(role)) throw new Error("Seleccione el rol Gerente o Supervisor.");
+    const directory = await getDoc(doc(database, "userDirectory", await hash(email)));
+    if (!directory.exists()) throw new Error("El usuario debe crear su cuenta e iniciar sesión una vez antes de ser agregado.");
+    const profile = directory.data() as { uid?: string; email?: string; displayName?: string };
+    const memberUid = required(profile.uid, "el usuario registrado");
+    if (memberUid === uid) throw new Error("El propietario ya es administrador del espacio.");
+    const membershipRef = doc(database, "memberships", memberUid);
+    const memberRef = doc(path(uid, "members"), memberUid);
+    await runTransaction(database, async (transaction) => {
+      const existing = await transaction.get(membershipRef);
+      if (existing.exists()) {
+        const current = existing.data() as { ownerUid?: string };
+        if (current.ownerUid && current.ownerUid !== memberUid && current.ownerUid !== uid) {
+          throw new Error("El usuario ya pertenece a otro espacio de trabajo.");
+        }
+      }
+      const values = {
+        ownerUid: uid,
+        role,
+        email,
+        displayName: String(profile.displayName || email.split("@")[0]),
+        active: true,
+      };
+      transaction.set(membershipRef, values);
+      transaction.set(memberRef, {
+        email: values.email,
+        displayName: values.displayName,
+        role: values.role,
+        active: true,
+      });
+    });
+    return;
+  }
+
+  if (input.action === "deleteMember") {
+    if (actor.role !== "admin") throw new Error("Solo el administrador puede gestionar usuarios.");
+    const memberUid = required(input.id, "el usuario");
+    if (memberUid === uid) throw new Error("No puede eliminar al propietario del espacio.");
+    const membershipRef = doc(database, "memberships", memberUid);
+    await runTransaction(database, async (transaction) => {
+      const membership = await transaction.get(membershipRef);
+      if (membership.exists() && membership.data().ownerUid === uid) transaction.delete(membershipRef);
+      transaction.delete(doc(path(uid, "members"), memberUid));
+    });
+    return;
+  }
+
+  if (input.action === "commitment") {
+    const companyId = required(input.companyId, "la empresa");
+    if (!data.companies.some((company) => company.id === companyId)) throw new Error("Seleccione una empresa válida.");
+    const accountId = input.accountId ? String(input.accountId) : null;
+    if (accountId && !data.accounts.some((account) => account.id === accountId && account.companyId === companyId)) {
+      throw new Error("La cuenta prevista no pertenece a la empresa.");
+    }
+    const previous = input.id ? data.commitments.find((item) => item.id === input.id) : undefined;
+    if (input.id && !previous) throw new Error("El compromiso ya no existe.");
+    if (actor.role === "supervisor" && previous && (previous.supervisorUid !== actor.uid || previous.status !== "pending")) {
+      throw new Error("Solo puede editar compromisos propios que estén pendientes.");
+    }
+    const businessType = required(input.businessType, "el tipo de negocio forestal");
+    const counterparty = required(input.counterparty, "la contraparte");
+    const detail = required(input.detail, "el detalle del negocio");
+    const dueDate = date(input.dueDate, "La fecha del compromiso");
+    const amount = integer(input.amount, "El monto comprometido");
+    const id = input.id || newId(uid, "commitments");
+    const now = new Date().toISOString();
+    const values: Omit<Commitment, "id"> = {
+      companyId,
+      accountId,
+      supervisorUid: previous?.supervisorUid || actor.uid,
+      supervisorName: previous?.supervisorName || actor.displayName,
+      businessType,
+      counterparty,
+      detail,
+      dueDate,
+      amount,
+      status: previous?.status || "pending",
+      createdAt: previous?.createdAt || now,
+      updatedAt: now,
+    };
+    await setDoc(doc(path(uid, "commitments"), id), values);
+    return;
+  }
+
+  if (input.action === "commitmentStatus") {
+    if (actor.role === "supervisor") throw new Error("Solo Gerencia puede cambiar el estado del compromiso.");
+    const id = required(input.id, "el compromiso");
+    if (!data.commitments.some((item) => item.id === id)) throw new Error("El compromiso ya no existe.");
+    if (!["pending", "confirmed", "cancelled"].includes(input.status)) throw new Error("El estado no es válido.");
+    await setDoc(doc(path(uid, "commitments"), id), { status: input.status, updatedAt: new Date().toISOString() }, { merge: true });
+    return;
+  }
+
+  if (input.action === "deleteCommitment") {
+    const id = required(input.id, "el compromiso");
+    const commitment = data.commitments.find((item) => item.id === id);
+    if (!commitment) return;
+    if (actor.role === "supervisor" && (commitment.supervisorUid !== actor.uid || commitment.status !== "pending")) {
+      throw new Error("Solo puede eliminar compromisos propios que estén pendientes.");
+    }
+    await deleteDoc(doc(path(uid, "commitments"), id));
+    return;
+  }
+
+  if (actor.role === "supervisor") throw new Error("Tu rol solo permite administrar compromisos forestales.");
+
   if (input.action === "company") {
     const name = required(input.name, "la razón social");
     const rut = cleanRut(required(input.rut, "el RUT"));

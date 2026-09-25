@@ -26,6 +26,8 @@ describe("reglas básicas de tesorería", () => {
         { id: "p1", entryId: "e1", accountId: "a1", date: "2026-01-03", amount: 500, note: "" },
         { id: "p2", entryId: "e2", accountId: "a1", date: "2026-01-04", amount: 300, note: "" },
       ],
+      commitments: [],
+      members: [],
     };
     expect(balance(data.accounts[0], data, "2026-01-04")).toBe(1200);
   });

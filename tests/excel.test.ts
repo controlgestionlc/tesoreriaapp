@@ -10,6 +10,8 @@ const emptyData: Data = {
   partners: [],
   entries: [],
   payments: [],
+  commitments: [],
+  members: [],
 };
 
 async function registroFile() {

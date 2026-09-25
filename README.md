@@ -12,8 +12,12 @@ Aplicación web instalable (PWA) para administrar el flujo de caja de varias emp
 - Creación automática de auxiliares nuevos desde el RUT y nombre del archivo; si una fila no trae RUT, intenta reutilizar un auxiliar anterior por nombre.
 - Movimientos manuales, préstamos y leasing; estos últimos admiten hasta 60 cuotas.
 - Cobros y pagos totales o parciales que actualizan el saldo bancario.
+- Compromisos forestales para bosque en pie, madera puesta en planta u orilla de camino, con fecha, monto, contraparte y detalle del negocio.
+- Flujo de aprobación: los compromisos quedan pendientes hasta que un gerente o administrador los confirma; solo entonces afectan la proyección de caja.
+- Roles Administrador, Gerente y Supervisor. El supervisor usa una vista móvil simplificada y solo puede consultar o editar sus propios compromisos pendientes.
+- Panel gerencial con monto clicable para abrir el detalle del compromiso y acciones de confirmar o descartar.
 - Exportación a Excel, interfaz responsiva estilo SAP e instalación en PC, Android y iPhone.
-- Acceso por correo/contraseña o Google. Los datos de cada usuario quedan aislados en Firestore.
+- Acceso por correo/contraseña o Google. Cada equipo comparte un espacio protegido por roles en Firestore.
 
 ## 1. Terminar de preparar Firebase
 
@@ -31,7 +35,21 @@ La configuración web ya está incorporada. Solo debes completar estas acciones 
    firebase deploy --only firestore:rules,firestore:indexes
    ```
 
-Las reglas permiten leer y escribir únicamente dentro de `users/{uid}/...` cuando el usuario autenticado coincide con ese `uid`. Publícalas antes de ingresar datos reales.
+Las reglas incluidas aplican los permisos de Administrador, Gerente y Supervisor directamente en Firestore. **Debes publicar estas reglas antes de subir la versión 1.2 a GitHub**, pues la aplicación crea el espacio compartido al iniciar sesión.
+
+## Roles y alta de usuarios
+
+- **Administrador:** acceso financiero completo, aprobación de compromisos y administración de usuarios.
+- **Gerente:** acceso financiero completo y aprobación de compromisos.
+- **Supervisor:** solo ve las empresas disponibles y sus propios compromisos; puede crear, editar o eliminar los que sigan pendientes.
+
+Para incorporar a una persona:
+
+1. La persona crea su cuenta e inicia sesión una vez en la aplicación, para registrar su correo.
+2. El administrador entra en **Usuarios y permisos → Agregar usuario**, escribe ese correo y asigna Gerente o Supervisor.
+3. La persona cierra sesión y vuelve a ingresar. Desde el móvil verá automáticamente la interfaz correspondiente a su rol.
+
+Los usuarios existentes se convierten automáticamente en administradores de su propio espacio y conservan sus datos actuales; no se requiere migración manual.
 
 ## 2. Ejecutar localmente
 
@@ -68,11 +86,15 @@ La app requiere conexión para consultar saldos y guardar cambios. Los datos fin
 Cada cuenta autenticada tiene estas subcolecciones:
 
 ```text
-users/{uid}/companies
-users/{uid}/accounts
-users/{uid}/partners
-users/{uid}/entries
-users/{uid}/payments
+memberships/{uid}
+userDirectory/{hashCorreo}
+users/{ownerUid}/members
+users/{ownerUid}/companies
+users/{ownerUid}/accounts
+users/{ownerUid}/partners
+users/{ownerUid}/entries
+users/{ownerUid}/payments
+users/{ownerUid}/commitments
 ```
 
 Los documentos de cliente/proveedor usan un identificador determinista para evitar duplicados incluso si dos dispositivos intentan crear el mismo documento. Los abonos y las importaciones se guardan mediante transacciones de Firestore.

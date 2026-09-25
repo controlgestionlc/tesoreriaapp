@@ -2,8 +2,79 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /users/{userId}/{document=**} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+    function signedIn() {
+      return request.auth != null;
+    }
+    function isOwner(ownerUid) {
+      return signedIn() && request.auth.uid == ownerUid;
+    }
+    function memberPath(ownerUid) {
+      return /databases/$(database)/documents/users/$(ownerUid)/members/$(request.auth.uid);
+    }
+    function isMember(ownerUid) {
+      return isOwner(ownerUid) || (signedIn() && exists(memberPath(ownerUid)) && get(memberPath(ownerUid)).data.active == true);
+    }
+    function role(ownerUid) {
+      return isOwner(ownerUid) ? 'admin' : get(memberPath(ownerUid)).data.role;
+    }
+    function isFinance(ownerUid) {
+      return isMember(ownerUid) && role(ownerUid) in ['admin', 'manager'];
+    }
+    function isAdmin(ownerUid) {
+      return isMember(ownerUid) && role(ownerUid) == 'admin';
+    }
+
+    match /userDirectory/{emailHash} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid && request.resource.data.email == request.auth.token.email;
+      allow update: if signedIn() && resource.data.uid == request.auth.uid && request.resource.data.uid == request.auth.uid && request.resource.data.email == request.auth.token.email;
+      allow delete: if false;
+    }
+
+    match /memberships/{memberUid} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn() && (
+        (request.auth.uid == memberUid && request.resource.data.ownerUid == memberUid && request.resource.data.role == 'admin') ||
+        (isAdmin(request.resource.data.ownerUid) && request.resource.data.role in ['manager', 'supervisor'])
+      );
+      allow update: if signedIn() && request.resource.data.role in ['manager', 'supervisor'] &&
+        (isAdmin(resource.data.ownerUid) || isAdmin(request.resource.data.ownerUid));
+      allow delete: if signedIn() && memberUid != resource.data.ownerUid && isAdmin(resource.data.ownerUid);
+    }
+
+    match /users/{ownerUid}/members/{memberUid} {
+      allow read: if isFinance(ownerUid) || (signedIn() && request.auth.uid == memberUid);
+      allow create, update: if isAdmin(ownerUid) && (
+        (memberUid == ownerUid && request.resource.data.role == 'admin') ||
+        (memberUid != ownerUid && request.resource.data.role in ['manager', 'supervisor'])
+      );
+      allow delete: if isAdmin(ownerUid) && memberUid != ownerUid;
+    }
+
+    match /users/{ownerUid}/companies/{itemId} {
+      allow read: if isMember(ownerUid);
+      allow write: if isFinance(ownerUid);
+    }
+
+    match /users/{ownerUid}/{collectionName}/{itemId} {
+      allow read, write: if collectionName in ['accounts', 'partners', 'entries', 'payments'] && isFinance(ownerUid);
+    }
+
+    match /users/{ownerUid}/commitments/{itemId} {
+      allow read: if isFinance(ownerUid) ||
+        (isMember(ownerUid) && resource.data.supervisorUid == request.auth.uid);
+      allow create: if isFinance(ownerUid) ||
+        (isMember(ownerUid) && role(ownerUid) == 'supervisor' &&
+          request.resource.data.supervisorUid == request.auth.uid && request.resource.data.status == 'pending');
+      allow update: if isFinance(ownerUid) ||
+        (isMember(ownerUid) && role(ownerUid) == 'supervisor' &&
+          resource.data.supervisorUid == request.auth.uid && resource.data.status == 'pending' &&
+          request.resource.data.supervisorUid == request.auth.uid && request.resource.data.status == 'pending');
+      allow delete: if isFinance(ownerUid) ||
+        (isMember(ownerUid) && role(ownerUid) == 'supervisor' &&
+          resource.data.supervisorUid == request.auth.uid && resource.data.status == 'pending');
     }
 
     match /{document=**} {
